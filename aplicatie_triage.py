@@ -44,10 +44,8 @@ if not df.empty:
         st.session_state.simulare_activa = False
         st.rerun()
 
-    # --- NOU: Meniu de Selectare Manuală a Oricărui Soldat ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔎 Căutare Manuală")
-    # Găsim indexul soldatului selectat curent (dacă există) pentru a-l seta ca default în listă
     index_default = 0
     if st.session_state.soldat_selectat in lista_completa:
         index_default = lista_completa.index(st.session_state.soldat_selectat)
@@ -59,7 +57,6 @@ if not df.empty:
         st.session_state.soldat_selectat = soldat_manual
         st.rerun()
 
-    # Buton de întoarcere rapidă
     if st.session_state.mod_vizualizare == 'detaliu':
         st.sidebar.markdown("---")
         if st.sidebar.button("🔙 ÎNAPOI LA RADAR", type="secondary"):
@@ -75,25 +72,25 @@ if not df.empty:
         * Risc < 40%. Pacient stabil.
         
         **🟨 T2 (GALBEN) - Alertă Tactică**
-        * Risc 40-79%. Deteriorare detectată. Necesită intervenția medicului de pluton.
+        * Risc 40-79%. Deteriorare detectată.
         
         **🟥 T1 (ROȘU) - Colaps Critic**
-        * Risc > 80%. Șoc iminent sau instalat. Solicitare MEDEVAC imediată.
+        * Risc > 80%. Șoc iminent. Solicitare MEDEVAC imediată.
         
         ---
         **🧠 Inovații (Deep Tech):**
-        * **Edge AI:** Cât timp soldatul e stabil (Verde), senzorul nu transmite date. Păstrează „Liniștea Radio” pentru a evita detecția inamică.
-        * **Sensor Fusion:** AI-ul face diferența între efort fizic intens (alergare sub foc) și o rană reală (hemoragie).
-        * **MASCAL (Mass Casualty):** Când mai mulți soldați devin Roșii, AI-ul direcționează singur elicopterul/drona spre cel cu timpul de supraviețuire cel mai scurt.
+        * **Edge AI:** Păstrează „Liniștea Radio” când pacientul este stabil.
+        * **Sensor Fusion:** Diferențiază efortul fizic de o rană reală.
+        * **Protocol TCCC:** Asistență automată de prim ajutor pentru camarazi.
         """)
 
-    # --- 5. FUNCȚIA DE INTELIGENȚĂ ARTIFICIALĂ ---
+    # --- 5. FUNCȚII DE INTELIGENȚĂ ARTIFICIALĂ ---
     def evalueaza_soldat(pid, secunda):
         rand = date_toti[pid].iloc[secunda]
         p_act = rand['Puls'] if pd.notna(rand['Puls']) else 80
         s_act = rand['SpO2'] if pd.notna(rand['SpO2']) else 98
-        t_act = rand['Tensiune'] if pd.notna(rand['Tensiune']) else None
-        r_act = rand['Respiratie'] if pd.notna(rand['Respiratie']) else None
+        t_act = rand['Tensiune'] if pd.notna(rand['Tensiune']) else 120
+        r_act = rand['Respiratie'] if pd.notna(rand['Respiratie']) else 16
 
         d_spo2 = 0
         d_puls = 0
@@ -127,6 +124,24 @@ if not df.empty:
             'context': context, 'timp_exact': rand['Timp_Exact']
         }
 
+    # Asistentul Digital TCCC (Ghidaj de Prim Ajutor)
+    def genereaza_protocol_tccc(soldat):
+        if soldat['risc'] < 40:
+            return "✅ **Nicio acțiune medicală necesară.** Soldat combatant."
+        
+        instructiuni = []
+        if soldat['puls'] > 120 and soldat['tensiune'] < 90:
+            instructiuni.append("🩸 **RISC HEMORAGIE MASIVĂ!** Caută sursa sângerării. Dacă e pe membre, **APLICĂ GAROU (TOURNIQUET)** sus și strâns!")
+        if soldat['spo2'] < 90 and soldat['respiratie'] > 25:
+            instructiuni.append("🫁 **INSUFICIENȚĂ RESPIRATORIE!** Verifică toracele pentru plăgi împușcate. Aplică **Chest Seal (Pansament Ocluziv)** dacă e necesar.")
+        if soldat['spo2'] < 85 and soldat['respiratie'] < 8:
+            instructiuni.append("⚠️ **COLAPS CĂI AERIENE!** Ridică bărbia. Eliberează căile respiratorii. Pregătește suport ventilator.")
+        
+        if not instructiuni:
+            instructiuni.append("🚑 **DETERIORARE FIZIOLOGICĂ.** Monitorizează funcțiile vitale și pregătește trusa de traumă.")
+            
+        return "\n\n".join(instructiuni)
+
     timp_curent = min(st.session_state.timp_curent, durata_minima - 1)
 
     # ==========================================
@@ -154,11 +169,11 @@ if not df.empty:
         
         def deseneaza_card(soldat, dimensiune_titlu="h3"):
             if soldat['risc'] < 40:
-                culoare_bg = "#1e3d23"; stadiu = "T3 (VERDE)"; edge_ai = "🤫 LINIȘTE RADIO (Edge AI)"
+                culoare_bg = "#1e3d23"; stadiu = "T3 (VERDE)"; edge_ai = "🤫 LINIȘTE RADIO"
             elif soldat['risc'] < 80:
-                culoare_bg = "#8a631c"; stadiu = "T2 (GALBEN)"; edge_ai = "📡 ALERTĂ PRE-CRASH (Transmisie activă)"
+                culoare_bg = "#8a631c"; stadiu = "T2 (GALBEN)"; edge_ai = "📡 ALERTĂ PRE-CRASH"
             else:
-                culoare_bg = "#6e1616"; stadiu = "T1 (ROȘU)"; edge_ai = "🆘 SOS MEDEVAC (Poziție transmisă)"
+                culoare_bg = "#6e1616"; stadiu = "T1 (ROȘU)"; edge_ai = "🆘 SOS MEDEVAC"
 
             st.markdown(f"""
             <div style='background-color: {culoare_bg}; padding: 15px; border-radius: 10px; border: 1px solid #555; margin-bottom: 10px;'>
@@ -196,34 +211,38 @@ if not df.empty:
         
         status_misiune = "<span style='color:red;'>🔴 LIVE REC</span>" if st.session_state.simulare_activa else "<span style='color:gray;'>⏸ PAUZĂ</span>"
         
-        # Titlul este simplificat pentru a duce ochiul direct jos
         st.markdown(f"<h2>🔍 Dosar Tactic: {pid} | {status_misiune}</h2>", unsafe_allow_html=True)
         st.markdown(f"**⏱️ Secunda: {timp_curent} | ORA: {soldat['timp_exact']}**")
 
-        # Metricele numerice rapide
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Puls (BPM)", f"{soldat['puls']:.0f}", f"{soldat['delta_puls']:.1f}", delta_color="inverse")
         c2.metric("SpO2 (%)", f"{soldat['spo2']:.0f}", f"{soldat['delta_spo2']:.1f}")
         c3.metric("Tensiune (mmHg)", f"{soldat['tensiune']:.0f}" if pd.notna(soldat['tensiune']) else "N/A")
         c4.metric("Respirație", f"{soldat['respiratie']:.0f}" if pd.notna(soldat['respiratie']) else "N/A")
 
-        # --- NOU: GRAFICUL COMPLET CU TOATE CELE 4 VARIABILE ---
-        # Folosim lățimea completă a ecranului (fără coloană laterală) pentru a face graficul imens
         st.markdown("### 📊 Monitorizare Multi-Senzor")
         date_istoric = date_toti[pid].iloc[:timp_curent+1]
         
-        # Extragem și curățăm toate cele 4 linii pentru grafic
         grafic_df = pd.DataFrame({
             'SpO2 (%)': date_istoric['SpO2'].ffill().fillna(98),
             'Puls (BPM)': date_istoric['Puls'].ffill().fillna(80),
             'Tensiune (mmHg)': date_istoric['Tensiune'].ffill().fillna(120),
             'Respirație (RPM)': date_istoric['Respiratie'].ffill().fillna(16)
         })
-        # Desenăm graficul mare
         st.line_chart(grafic_df, height=450)
 
-        # Modulul de predicție mutat imediat dedesubt (pentru a nu "strânge" graficul pe laterale)
+        # --- NOU: ASISTENTUL TACTIC DE PRIM AJUTOR ---
+        protocol_activ = genereaza_protocol_tccc(soldat)
+        
         st.markdown("---")
+        if soldat['risc'] >= 40:
+            st.error("### ⚠️ PROTOCOL ACȚIUNE IMEDIATĂ (TCCC)")
+            st.markdown(f"<div style='font-size: 18px; padding: 10px; background-color: #521818; border-radius: 5px; color: white;'>{protocol_activ}</div>", unsafe_allow_html=True)
+        else:
+            st.success("### ✅ PROTOCOL ACȚIUNE (TCCC)")
+            st.markdown(f"<div style='font-size: 18px; padding: 10px; background-color: #1e3d23; border-radius: 5px; color: white;'>{protocol_activ}</div>", unsafe_allow_html=True)
+        st.markdown("---")
+
         c_pred, c_med = st.columns(2)
         
         with c_pred:
@@ -241,9 +260,9 @@ if not df.empty:
         with c_med:
             st.subheader("🚁 Auto-Dispatch MEDEVAC")
             if risc >= 80:
-                st.error("🚨 ALERTĂ T1 DECLANȘATĂ!\n* Semnal SOS prioritar trimis.\n* Dronă activată.")
+                st.error("🚨 ALERTĂ T1 DECLANȘATĂ!\n* Semnal SOS prioritar trimis.\n* Dronă activată.\n* ETA: 3 min.")
             else:
-                st.success("✅ Pacient stabil.")
+                st.success("✅ MEDEVAC în Stand-by.")
 
     # ==========================================
     # MOTORUL TIMPULUI CONTINUU
