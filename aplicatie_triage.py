@@ -1,14 +1,22 @@
 import streamlit as st
 import pandas as pd
 import time
-import numpy as np
 
-# --- 1. CONFIGURARE INTERFAȚĂ C4ISR ---
+# --- 1. CONFIGURARE INTERFAȚĂ ---
 st.set_page_config(page_title="NATO DIANA - P.A.C.E. C4ISR", layout="wide")
-st.title("🚁 P.A.C.E. - Command & Control (C4ISR)")
-st.markdown("### Demonstrator TRL 4: MASCAL, Edge AI, Sensor Fusion & Auto-Dispatch")
 
-# --- 2. ÎNCĂRCAREA DATELOR ---
+# --- 2. INIȚIALIZARE MEMORIE (SESSION STATE) ---
+# Aici aplicația "ține minte" unde ești și în ce secundă a misiunii te afli
+if 'mod_vizualizare' not in st.session_state:
+    st.session_state.mod_vizualizare = 'pluton' # Poate fi 'pluton' sau 'detaliu'
+if 'soldat_selectat' not in st.session_state:
+    st.session_state.soldat_selectat = None
+if 'timp_curent' not in st.session_state:
+    st.session_state.timp_curent = 0
+if 'simulare_activa' not in st.session_state:
+    st.session_state.simulare_activa = False
+
+# --- 3. ÎNCĂRCAREA DATELOR ---
 @st.cache_data
 def incarca_date():
     try:
@@ -20,134 +28,186 @@ def incarca_date():
 df = incarca_date()
 
 if not df.empty:
-    st.sidebar.header("🕹️ Parametri Misiune")
-    simuleaza = st.sidebar.button("▶ START MISIUNE TACTICĂ", type="primary")
-    st.sidebar.markdown("---")
-    st.sidebar.info("""
-    **Inovații Active:**
-    * 🤫 **Edge AI:** Liniște radio până la detecția colapsului.
-    * 🌐 **Sensor Fusion:** Diferențiere între efort și hemoragie.
-    * 🚑 **MASCAL:** Rutare autonomă a resurselor (1 Dronă MEDEVAC la 4 soldați).
-    """)
-
-    # Selectăm 4 pacienți pentru pluton (Includem cazurile critice descoperite)
+    # Selectăm cei 4 soldați (Plutonul Alpha)
     lista_completa = df['Patient_ID'].unique().tolist()
-    # Asigurăm că avem pacienții instabili pentru demonstrație, plus alții la întâmplare
     pacienti_tinta = [p for p in [3000866, 3000063, 3000282, lista_completa[0], lista_completa[1]] if p in lista_completa][:4]
     
-    # Extragem datele pentru cei 4 soldați
     date_pluton = {pid: df[df['Patient_ID'] == pid].reset_index(drop=True) for pid in pacienti_tinta}
-    # Găsim durata minimă ca să nu dea eroare bucla
     durata_minima = min([len(date_pluton[pid]) for pid in pacienti_tinta])
 
-    # --- LAYOUT DASHBOARD ---
-    st.markdown("---")
-    header_mascal = st.empty() # Aici afișăm decizia AI-ului pentru dronă
-    st.markdown("### 🪖 Status Pluton Alpha (Monitorizare Live)")
+    # --- 4. PANOU LATERAL (MENIU) ---
+    st.sidebar.header("🕹️ Comandă Misiune")
     
-    # Creăm un grid 2x2 pentru cei 4 soldați
-    col1, col2 = st.columns(2)
-    col3, col4 = st.columns(2)
-    containere_soldati = [col1.empty(), col2.empty(), col3.empty(), col4.empty()]
+    if st.sidebar.button("▶ START MISIUNE", type="primary"):
+        st.session_state.simulare_activa = True
+        st.session_state.timp_curent = 0 # Resetăm ceasul
+        st.rerun() # Reîmprospătăm ecranul instant
+        
+    if st.sidebar.button("⏸ PAUZĂ MISIUNE"):
+        st.session_state.simulare_activa = False
+        st.rerun()
 
-    if simuleaza:
-        for i in range(durata_minima):
-            stari_soldati = []
+    # Dacă suntem în modul "zoom", arătăm butonul de întoarcere
+    if st.session_state.mod_vizualizare == 'detaliu':
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🔙 ÎNAPOI LA PLUTON", type="secondary"):
+            st.session_state.mod_vizualizare = 'pluton'
+            st.rerun()
 
-            # 1. EVALUAREA TUTUROR CELOR 4 SOLDAȚI
-            for idx, pid in enumerate(pacienti_tinta):
-                rand = date_pluton[pid].iloc[i]
-                
-                p_actual = rand['Puls'] if pd.notna(rand['Puls']) else 80
-                s_actual = rand['SpO2'] if pd.notna(rand['SpO2']) else 98
-                
-                # Derivata (Predicția viitorului)
-                if i >= 10:
-                    s_trecut = date_pluton[pid].iloc[i-10]['SpO2']
-                    delta_spo2 = s_actual - s_trecut
+    # --- 5. FUNCȚIA DE INTELIGENȚĂ ARTIFICIALĂ (P.A.C.E.) ---
+    # Procesează semnele vitale pentru un soldat la secunda X
+    def evalueaza_soldat(pid, secunda):
+        rand = date_pluton[pid].iloc[secunda]
+        p_act = rand['Puls'] if pd.notna(rand['Puls']) else 80
+        s_act = rand['SpO2'] if pd.notna(rand['SpO2']) else 98
+        t_act = rand['Tensiune'] if pd.notna(rand['Tensiune']) else None
+        r_act = rand['Respiratie'] if pd.notna(rand['Respiratie']) else None
+
+        d_spo2 = 0
+        d_puls = 0
+        if secunda >= 10:
+            d_spo2 = s_act - date_pluton[pid].iloc[secunda-10]['SpO2']
+            d_puls = p_act - date_pluton[pid].iloc[secunda-10]['Puls']
+
+        risc = 0
+        if s_act < 95: risc += 20
+        if s_act < 90: risc += 40
+        if p_act > 110 or p_act < 50: risc += 20
+        if d_spo2 < -1.5: risc += 40 
+        risc = min(100, max(0, risc))
+
+        timp_sec = 9999
+        if d_spo2 < -0.5 and s_act > 85:
+            timp_sec = int(abs((s_act - 85) / (d_spo2 / 10)))
+        elif risc >= 80:
+            timp_sec = 0
+
+        context = "✅ Stabil"
+        if p_act > 120 and s_act >= 95:
+            context = "🏃 Efort Tactic"
+            risc = max(0, risc - 20)
+        elif p_act > 120 and s_act < 92:
+            context = "💥 Traumă/Hemoragie"
+
+        return {
+            'id': pid, 'puls': p_act, 'spo2': s_act, 'tensiune': t_act, 'respiratie': r_act,
+            'delta_puls': d_puls, 'delta_spo2': d_spo2, 'risc': risc, 'timp_sec': timp_sec,
+            'context': context, 'timp_exact': rand['Timp_Exact']
+        }
+
+    # Asigurăm că nu depășim baza de date
+    timp_curent = min(st.session_state.timp_curent, durata_minima - 1)
+
+    # ==========================================
+    # ECRAN 1: VEDEREA DE ANSAMBLU (PLUTON)
+    # ==========================================
+    if st.session_state.mod_vizualizare == 'pluton':
+        st.title("🚁 P.A.C.E. - Command & Control (C4ISR)")
+        st.markdown("### 🪖 Status Pluton Alpha")
+
+        stari_soldati = [evalueaza_soldat(pid, timp_curent) for pid in pacienti_tinta]
+        stari_sortate = sorted(stari_soldati, key=lambda x: (-x['risc'], x['timp_sec']))
+        cel_mai_critic = stari_sortate[0]
+
+        if cel_mai_critic['risc'] >= 80:
+            st.error(f"🚨 **PROTOCOL MASCAL ACTIVAT** | Drona MEDEVAC direcționată către **Soldatul {cel_mai_critic['id']}**.")
+        else:
+            st.success("✅ Pluton Operațional. Drona MEDEVAC în stand-by la bază.")
+
+        # Generăm 2 rânduri cu 2 coloane
+        rand1 = st.columns(2)
+        rand2 = st.columns(2)
+        coloane_grid = [rand1[0], rand1[1], rand2[0], rand2[1]]
+
+        for idx, soldat in enumerate(stari_soldati):
+            with coloane_grid[idx]:
+                if soldat['risc'] < 40:
+                    culoare_bg = "#1e3d23"; stadiu = "T3 (VERDE)"
+                elif soldat['risc'] < 80:
+                    culoare_bg = "#8a631c"; stadiu = "T2 (GALBEN)"
                 else:
-                    delta_spo2 = 0
+                    culoare_bg = "#6e1616"; stadiu = "T1 (ROȘU)"
 
-                # Calcul Risc Predictiv
-                risc_baza = 0
-                if s_actual < 95: risc_baza += 20
-                if s_actual < 90: risc_baza += 40
-                if p_actual > 110 or p_actual < 50: risc_baza += 20
-                if delta_spo2 < -1.5: risc_baza += 40 
-                risc_total = min(100, max(0, risc_baza))
+                # Interfața soldatului
+                st.markdown(f"""
+                <div style='background-color: {culoare_bg}; padding: 15px; border-radius: 10px; border: 1px solid #555;'>
+                    <h3 style='margin: 0; color: white;'>Soldat {soldat['id']} - {stadiu}</h3>
+                    <p style='margin: 0; color: #aaa;'>⏱️ Timp: {soldat['timp_exact']}</p>
+                    <hr style='margin: 10px 0; border-color: #555;'>
+                    <p style='color: white;'><b>Puls:</b> {soldat['puls']:.0f} | <b>SpO2:</b> {soldat['spo2']:.0f}%</p>
+                    <p style='color: #ffb7b2;'><b>Risc Colaps:</b> {soldat['risc']}% | {soldat['context']}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-                # TIMP RĂMAS PÂNĂ LA COLAPS
-                timp_ramas_sec = 9999
-                if delta_spo2 < -0.5 and s_actual > 85:
-                    timp_ramas_sec = int(abs((s_actual - 85) / (delta_spo2 / 10)))
-                elif risc_total >= 80:
-                    timp_ramas_sec = 0
+                # BUTONUL MAGIC: Trece în modul Detaliu
+                if st.button(f"🔍 Vezi Detalii Soldat {soldat['id']}", key=f"btn_{soldat['id']}", use_container_width=True):
+                    st.session_state.mod_vizualizare = 'detaliu'
+                    st.session_state.soldat_selectat = soldat['id']
+                    st.rerun()
 
-                # SENSOR FUSION SIMULAT (Efort vs Traumă)
-                context = "Nespecificat"
-                if p_actual > 120 and s_actual >= 95:
-                    context = "🏃‍♂️ Efort Tactic (Combat Stress)"
-                    risc_total = max(0, risc_total - 20) # Reducem riscul fals
-                elif p_actual > 120 and s_actual < 92:
-                    context = "💥 Traumă / Hemoragie masivă"
-                elif s_actual < 95 and p_actual < 100:
-                    context = "💨 Inhalare Fum / Problemă Căi Respiratorii"
-                else:
-                    context = "✅ Poziție Stabilă"
+    # ==========================================
+    # ECRAN 2: VEDEREA DETALIATĂ (INDIVIDUALĂ)
+    # ==========================================
+    elif st.session_state.mod_vizualizare == 'detaliu':
+        pid = st.session_state.soldat_selectat
+        soldat = evalueaza_soldat(pid, timp_curent)
+        
+        st.title(f"🔍 Dosar Tactic: Soldatul {pid}")
+        st.markdown(f"**Urmărire live pentru semnalul MEDEVAC. Te afli la secunda: {timp_curent} din misiune.**")
 
-                stari_soldati.append({
-                    'id': pid,
-                    'puls': p_actual,
-                    'spo2': s_actual,
-                    'risc': risc_total,
-                    'timp_sec': timp_ramas_sec,
-                    'context': context,
-                    'container': containere_soldati[idx],
-                    'timp_exact': rand['Timp_Exact']
-                })
+        col_stanga, col_dreapta = st.columns([2, 1])
 
-            # 2. MOTORUL MASCAL (Prioritizarea Resurselor)
-            # Sortăm soldații: primul e cel cu riscul cel mai mare și timpul cel mai scurt
-            stari_sortate = sorted(stari_soldati, key=lambda x: (-x['risc'], x['timp_sec']))
+        with col_stanga:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Puls (BPM)", f"{soldat['puls']:.0f}", f"{soldat['delta_puls']:.1f}", delta_color="inverse")
+            c2.metric("SpO2 (%)", f"{soldat['spo2']:.0f}", f"{soldat['delta_spo2']:.1f}")
+            c3.metric("Tensiune", f"{soldat['tensiune']:.0f}" if pd.notna(soldat['tensiune']) else "N/A")
+            c4.metric("Respirație", f"{soldat['respiratie']:.0f}" if pd.notna(soldat['respiratie']) else "N/A")
+
+            # Aici desenăm istoricul PÂNĂ la secunda curentă
+            date_istoric = date_pluton[pid].iloc[:timp_curent+1]
+            grafic_df = pd.DataFrame({
+                'SpO2 (%)': date_istoric['SpO2'].ffill().fillna(98),
+                'Puls (BPM)': date_istoric['Puls'].ffill().fillna(80),
+                'Tensiune (mmHg)': date_istoric['Tensiune'].ffill().fillna(120),
+                'Respirație (RPM)': date_istoric['Respiratie'].ffill().fillna(16)
+            })
+            st.line_chart(grafic_df, height=350)
+
+        with col_dreapta:
+            st.subheader("🔮 Inteligență Artificială")
+            risc = soldat['risc']
+            timp = "Stabil" if soldat['timp_sec'] == 9999 else ("IMINENT" if soldat['timp_sec'] == 0 else f"{soldat['timp_sec']//60}m {soldat['timp_sec']%60}s")
+
+            if risc < 40:
+                st.success(f"Probabilitate Colaps: {risc}%")
+                st.progress(risc / 100)
+                st.info(f"Timp până la șoc: {timp}")
+            elif risc < 80:
+                st.warning(f"Probabilitate Colaps: {risc}%")
+                st.progress(risc / 100)
+                st.warning(f"Timp până la șoc: {timp}")
+            else:
+                st.error(f"Probabilitate Colaps: {risc}%")
+                st.progress(risc / 100)
+                st.error(f"Timp până la șoc: {timp}")
             
-            cel_mai_critic = stari_sortate[0]
-            al_doilea_critic = stari_sortate[1]
+            st.markdown("---")
+            st.subheader("🚁 Extracție Autonomă")
+            if risc >= 80:
+                st.error("🚨 ALERTĂ T1 DECLANȘATĂ!\n\n* Semnal SOS prioritar trimis.\n* Dronă în tranzit.\n* Sânge O-negativ rezervat.")
+            elif risc >= 40:
+                st.warning("⚠️ Risc T2 Detectat. Monitorizare sporită.")
+            else:
+                st.success("✅ Pacient stabil.")
 
-            with header_mascal.container():
-                if cel_mai_critic['risc'] >= 80:
-                    st.error(f"🚨 **PROTOCOL MASCAL ACTIVAT** 🚨 | Drona MEDEVAC-1 a fost direcționată către **Soldatul {cel_mai_critic['id']}**. ETA: 3 min.")
-                    if al_doilea_critic['risc'] >= 60:
-                        st.warning(f"⚠️ Atenție: **Soldatul {al_doilea_critic['id']}** se deteriorează. Solicitare MEDEVAC-2 în așteptare.")
-                else:
-                    st.success("✅ Pluton Operațional. Drona MEDEVAC în stand-by la bază.")
-
-            # 3. AFIȘAREA INDIVIDUALĂ A FIECĂRUI SOLDAT
-            for soldat in stari_soldati:
-                with soldat['container'].container():
-                    # Setări vizuale în funcție de risc
-                    if soldat['risc'] < 40:
-                        culoare_bg = "#1e3d23" # Verde militar închis
-                        stadiu = "T3 (VERDE)"
-                        edge_ai = "🤫 LINIȘTE RADIO (Monitorizare Edge)"
-                    elif soldat['risc'] < 80:
-                        culoare_bg = "#8a631c" # Galben/Maro tactic
-                        stadiu = "T2 (GALBEN)"
-                        edge_ai = "📡 ALERTĂ PRE-CRASH (Transmisie activă)"
-                    else:
-                        culoare_bg = "#6e1616" # Roșu închis
-                        stadiu = "T1 (ROȘU) - CRITIC"
-                        edge_ai = "🆘 SOS MEDEVAC (Poziție transmisă)"
-
-                    # Caseta soldatului
-                    st.markdown(f"""
-                    <div style='background-color: {culoare_bg}; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #555;'>
-                        <h3 style='margin: 0; color: white;'>Soldat {soldat['id']} - {stadiu}</h3>
-                        <p style='margin: 0; font-size: 14px; color: #aaa;'>⏱️ Timp sistem: {soldat['timp_exact']} | <b>{edge_ai}</b></p>
-                        <hr style='margin: 10px 0; border-color: #555;'>
-                        <p style='margin: 0; color: white;'><b>Puls:</b> {soldat['puls']:.0f} BPM | <b>SpO2:</b> {soldat['spo2']:.0f}%</p>
-                        <p style='margin: 5px 0 0 0; color: #ddd;'><b>Fuziune Senzori:</b> {soldat['context']}</p>
-                        <p style='margin: 5px 0 0 0; color: #ffb7b2;'><b>Risc Colaps:</b> {soldat['risc']}%</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            time.sleep(0.4) # Viteza animației
+    # ==========================================
+    # MOTORUL TIMPULUI (Rulează constant în fundal)
+    # ==========================================
+    if st.session_state.simulare_activa and timp_curent < durata_minima - 1:
+        time.sleep(0.4) # Așteptăm puțin
+        st.session_state.timp_curent += 1 # Avansăm timpul cu o secundă
+        st.rerun() # Redesenăm interfața automat
+    elif st.session_state.simulare_activa and timp_curent >= durata_minima - 1:
+        st.success("🏁 Misiune finalizată (Sfârșitul datelor).")
+        st.session_state.simulare_activa = False
