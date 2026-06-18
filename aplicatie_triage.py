@@ -6,9 +6,8 @@ import time
 st.set_page_config(page_title="NATO DIANA - P.A.C.E. C4ISR", layout="wide")
 
 # --- 2. INIȚIALIZARE MEMORIE (SESSION STATE) ---
-# Aici aplicația "ține minte" unde ești și în ce secundă a misiunii te afli
 if 'mod_vizualizare' not in st.session_state:
-    st.session_state.mod_vizualizare = 'pluton' # Poate fi 'pluton' sau 'detaliu'
+    st.session_state.mod_vizualizare = 'pluton'
 if 'soldat_selectat' not in st.session_state:
     st.session_state.soldat_selectat = None
 if 'timp_curent' not in st.session_state:
@@ -28,7 +27,6 @@ def incarca_date():
 df = incarca_date()
 
 if not df.empty:
-    # Selectăm cei 4 soldați (Plutonul Alpha)
     lista_completa = df['Patient_ID'].unique().tolist()
     pacienti_tinta = [p for p in [3000866, 3000063, 3000282, lista_completa[0], lista_completa[1]] if p in lista_completa][:4]
     
@@ -38,16 +36,17 @@ if not df.empty:
     # --- 4. PANOU LATERAL (MENIU) ---
     st.sidebar.header("🕹️ Comandă Misiune")
     
-    if st.sidebar.button("▶ START MISIUNE", type="primary"):
+    if st.sidebar.button("▶ START / RESTART MISIUNE", type="primary"):
         st.session_state.simulare_activa = True
-        st.session_state.timp_curent = 0 # Resetăm ceasul
-        st.rerun() # Reîmprospătăm ecranul instant
+        st.session_state.timp_curent = 0
+        st.session_state.mod_vizualizare = 'pluton'
+        st.rerun()
         
     if st.sidebar.button("⏸ PAUZĂ MISIUNE"):
         st.session_state.simulare_activa = False
         st.rerun()
 
-    # Dacă suntem în modul "zoom", arătăm butonul de întoarcere
+    # Butonul de întoarcere din "Zoom" - acum cu efect imediat
     if st.session_state.mod_vizualizare == 'detaliu':
         st.sidebar.markdown("---")
         if st.sidebar.button("🔙 ÎNAPOI LA PLUTON", type="secondary"):
@@ -55,7 +54,6 @@ if not df.empty:
             st.rerun()
 
     # --- 5. FUNCȚIA DE INTELIGENȚĂ ARTIFICIALĂ (P.A.C.E.) ---
-    # Procesează semnele vitale pentru un soldat la secunda X
     def evalueaza_soldat(pid, secunda):
         rand = date_pluton[pid].iloc[secunda]
         p_act = rand['Puls'] if pd.notna(rand['Puls']) else 80
@@ -95,7 +93,6 @@ if not df.empty:
             'context': context, 'timp_exact': rand['Timp_Exact']
         }
 
-    # Asigurăm că nu depășim baza de date
     timp_curent = min(st.session_state.timp_curent, durata_minima - 1)
 
     # ==========================================
@@ -103,7 +100,10 @@ if not df.empty:
     # ==========================================
     if st.session_state.mod_vizualizare == 'pluton':
         st.title("🚁 P.A.C.E. - Command & Control (C4ISR)")
-        st.markdown("### 🪖 Status Pluton Alpha")
+        
+        # Titlu care arată că simularea curge
+        status_misiune = "🔴 LIVE" if st.session_state.simulare_activa else "⏸ PAUZĂ"
+        st.markdown(f"### 🪖 Status Pluton Alpha | {status_misiune}")
 
         stari_soldati = [evalueaza_soldat(pid, timp_curent) for pid in pacienti_tinta]
         stari_sortate = sorted(stari_soldati, key=lambda x: (-x['risc'], x['timp_sec']))
@@ -114,7 +114,6 @@ if not df.empty:
         else:
             st.success("✅ Pluton Operațional. Drona MEDEVAC în stand-by la bază.")
 
-        # Generăm 2 rânduri cu 2 coloane
         rand1 = st.columns(2)
         rand2 = st.columns(2)
         coloane_grid = [rand1[0], rand1[1], rand2[0], rand2[1]]
@@ -128,7 +127,6 @@ if not df.empty:
                 else:
                     culoare_bg = "#6e1616"; stadiu = "T1 (ROȘU)"
 
-                # Interfața soldatului
                 st.markdown(f"""
                 <div style='background-color: {culoare_bg}; padding: 15px; border-radius: 10px; border: 1px solid #555;'>
                     <h3 style='margin: 0; color: white;'>Soldat {soldat['id']} - {stadiu}</h3>
@@ -139,7 +137,6 @@ if not df.empty:
                 </div>
                 """, unsafe_allow_html=True)
 
-                # BUTONUL MAGIC: Trece în modul Detaliu
                 if st.button(f"🔍 Vezi Detalii Soldat {soldat['id']}", key=f"btn_{soldat['id']}", use_container_width=True):
                     st.session_state.mod_vizualizare = 'detaliu'
                     st.session_state.soldat_selectat = soldat['id']
@@ -152,62 +149,64 @@ if not df.empty:
         pid = st.session_state.soldat_selectat
         soldat = evalueaza_soldat(pid, timp_curent)
         
-        st.title(f"🔍 Dosar Tactic: Soldatul {pid}")
-        st.markdown(f"**Urmărire live pentru semnalul MEDEVAC. Te afli la secunda: {timp_curent} din misiune.**")
+        status_misiune = "<span style='color:red;'>🔴 LIVE REC</span>" if st.session_state.simulare_activa else "<span style='color:gray;'>⏸ PAUZĂ</span>"
+        
+        st.markdown(f"<h1>🔍 Dosar Tactic: Soldatul {pid} {status_misiune}</h1>", unsafe_allow_html=True)
+        st.markdown(f"**⏱️ Secunda Misiunii: {timp_curent} | ORA: {soldat['timp_exact']}**")
 
         col_stanga, col_dreapta = st.columns([2, 1])
 
         with col_stanga:
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Puls (BPM)", f"{soldat['puls']:.0f}", f"{soldat['delta_puls']:.1f}", delta_color="inverse")
+            c1.metric("Puls", f"{soldat['puls']:.0f}", f"{soldat['delta_puls']:.1f}", delta_color="inverse")
             c2.metric("SpO2 (%)", f"{soldat['spo2']:.0f}", f"{soldat['delta_spo2']:.1f}")
             c3.metric("Tensiune", f"{soldat['tensiune']:.0f}" if pd.notna(soldat['tensiune']) else "N/A")
             c4.metric("Respirație", f"{soldat['respiratie']:.0f}" if pd.notna(soldat['respiratie']) else "N/A")
 
-            # Aici desenăm istoricul PÂNĂ la secunda curentă
+            # Trasăm graficul, care acum se actualizează perfect în loop-ul misiunii
             date_istoric = date_pluton[pid].iloc[:timp_curent+1]
             grafic_df = pd.DataFrame({
                 'SpO2 (%)': date_istoric['SpO2'].ffill().fillna(98),
-                'Puls (BPM)': date_istoric['Puls'].ffill().fillna(80),
-                'Tensiune (mmHg)': date_istoric['Tensiune'].ffill().fillna(120),
-                'Respirație (RPM)': date_istoric['Respiratie'].ffill().fillna(16)
+                'Puls (BPM)': date_istoric['Puls'].ffill().fillna(80)
             })
             st.line_chart(grafic_df, height=350)
 
         with col_dreapta:
-            st.subheader("🔮 Inteligență Artificială")
+            st.subheader("🔮 AI Predictiv P.A.C.E.")
             risc = soldat['risc']
-            timp = "Stabil" if soldat['timp_sec'] == 9999 else ("IMINENT" if soldat['timp_sec'] == 0 else f"{soldat['timp_sec']//60}m {soldat['timp_sec']%60}s")
+            timp_text = "Stabil" if soldat['timp_sec'] == 9999 else ("IMINENT (0 min)" if soldat['timp_sec'] == 0 else f"{soldat['timp_sec']//60} min {soldat['timp_sec']%60} sec")
 
             if risc < 40:
                 st.success(f"Probabilitate Colaps: {risc}%")
                 st.progress(risc / 100)
-                st.info(f"Timp până la șoc: {timp}")
+                st.info(f"Timp până la șoc: {timp_text}")
             elif risc < 80:
                 st.warning(f"Probabilitate Colaps: {risc}%")
                 st.progress(risc / 100)
-                st.warning(f"Timp până la șoc: {timp}")
+                st.warning(f"Timp până la șoc: {timp_text}")
             else:
                 st.error(f"Probabilitate Colaps: {risc}%")
                 st.progress(risc / 100)
-                st.error(f"Timp până la șoc: {timp}")
+                st.error(f"Timp până la șoc: {timp_text}")
             
             st.markdown("---")
-            st.subheader("🚁 Extracție Autonomă")
+            st.subheader("🚁 Auto-Dispatch MEDEVAC")
             if risc >= 80:
-                st.error("🚨 ALERTĂ T1 DECLANȘATĂ!\n\n* Semnal SOS prioritar trimis.\n* Dronă în tranzit.\n* Sânge O-negativ rezervat.")
+                st.error("🚨 ALERTĂ T1 DECLANȘATĂ!\n* Semnal SOS prioritar trimis.\n* Dronă activată.")
             elif risc >= 40:
-                st.warning("⚠️ Risc T2 Detectat. Monitorizare sporită.")
+                st.warning("⚠️ Risc T2 Detectat. Medic alertat.")
             else:
                 st.success("✅ Pacient stabil.")
 
     # ==========================================
-    # MOTORUL TIMPULUI (Rulează constant în fundal)
+    # MOTORUL TIMPULUI CONTINUU
     # ==========================================
+    # Această secțiune de jos se asigură că misiunea merge înainte 
+    # indiferent în care ecran te afli!
     if st.session_state.simulare_activa and timp_curent < durata_minima - 1:
-        time.sleep(0.4) # Așteptăm puțin
-        st.session_state.timp_curent += 1 # Avansăm timpul cu o secundă
-        st.rerun() # Redesenăm interfața automat
+        time.sleep(0.3) # Viteza animației (0.3 e mai fluid decât 0.4)
+        st.session_state.timp_curent += 1 
+        st.rerun() 
     elif st.session_state.simulare_activa and timp_curent >= durata_minima - 1:
-        st.success("🏁 Misiune finalizată (Sfârșitul datelor).")
+        st.info("🏁 Misiune finalizată.")
         st.session_state.simulare_activa = False
