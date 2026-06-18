@@ -76,34 +76,72 @@ if not df.empty:
         
         **🟥 T1 (ROȘU) - Colaps Critic**
         * Risc > 80%. Șoc iminent. Solicitare MEDEVAC imediată.
+
+        **⬛ T4 (NEGRU) - Decedat (KIA)**
+        * Pierderea a cel puțin 3 parametri vitali. Protocol de extragere anulat, resurse realocate.
         
         ---
         **🧠 Inovații (Deep Tech):**
         * **Edge AI:** Păstrează „Liniștea Radio” când pacientul este stabil.
-        * **Sensor Fusion:** Diferențiază efortul fizic de o rană reală (corelând Puls, SpO2 și Tensiune).
+        * **Sensor Fusion:** Diferențiază efortul fizic de o rană reală. Reconstruiește istoric un senzor căzut.
         * **Protocol TCCC:** Asistență automată de prim ajutor pentru camarazi.
         """)
 
     # --- 5. FUNCȚII DE INTELIGENȚĂ ARTIFICIALĂ ---
     def evalueaza_soldat(pid, secunda):
         rand = date_toti[pid].iloc[secunda]
-        p_act = rand['Puls'] if pd.notna(rand['Puls']) else 80
-        s_act = rand['SpO2'] if pd.notna(rand['SpO2']) else 98
-        t_act = rand['Tensiune'] if pd.notna(rand['Tensiune']) else 120
-        r_act = rand['Respiratie'] if pd.notna(rand['Respiratie']) else 16
+        
+        # Helper: Determină dacă un senzor a picat (arată 0 sau NaN)
+        def is_zero_or_nan(val):
+            return pd.isna(val) or val == 0
+
+        valori_brute = [rand['Puls'], rand['SpO2'], rand['Tensiune'], rand['Respiratie']]
+        zeros_count = sum([1 for v in valori_brute if is_zero_or_nan(v)])
+
+        # --- NOU: LOGICĂ DE DECES / KIA (3+ senzori picați) ---
+        if zeros_count >= 3:
+            return {
+                'id': pid, 'puls': 0, 'spo2': 0, 'tensiune': 0, 'respiratie': 0,
+                'delta_puls': 0, 'delta_spo2': 0, 'risc': 100, 'timp_sec': 0,
+                'context': "💀 KIA (Fără semne vitale)", 'timp_exact': rand['Timp_Exact'],
+                'is_kia': True
+            }
+
+        # --- NOU: FILTRARE ERORI SENZOR (1-2 senzori picați = Folosim Date Istorice) ---
+        istoric = date_toti[pid].iloc[:secunda]
+        
+        def preia_istoric(col, default_val):
+            val_curenta = rand[col]
+            if is_zero_or_nan(val_curenta):
+                # Caută ultima valoare non-zero în istoric
+                valori_bune = istoric[istoric[col] > 0][col]
+                if not valori_bune.empty:
+                    return valori_bune.iloc[-1]
+                return default_val
+            return val_curenta
+
+        p_act = preia_istoric('Puls', 80)
+        s_act = preia_istoric('SpO2', 98)
+        t_act = preia_istoric('Tensiune', 120)
+        r_act = preia_istoric('Respiratie', 16)
 
         d_spo2 = 0
         d_puls = 0
         if secunda >= 10:
-            d_spo2 = s_act - date_toti[pid].iloc[secunda-10]['SpO2']
-            d_puls = p_act - date_toti[pid].iloc[secunda-10]['Puls']
+            s_trecut = preia_istoric('SpO2', 98)
+            p_trecut = preia_istoric('Puls', 80)
+            if not is_zero_or_nan(date_toti[pid].iloc[secunda-10]['SpO2']):
+                s_trecut = date_toti[pid].iloc[secunda-10]['SpO2']
+            if not is_zero_or_nan(date_toti[pid].iloc[secunda-10]['Puls']):
+                p_trecut = date_toti[pid].iloc[secunda-10]['Puls']
+            
+            d_spo2 = s_act - s_trecut
+            d_puls = p_act - p_trecut
 
         risc = 0
         if s_act < 95: risc += 20
         if s_act < 90: risc += 40
         if p_act > 110 or p_act < 50: risc += 20
-        
-        # NOU: Scăderea Tensiunii adaugă risc masiv direct în algoritmul de bază
         if t_act < 90: risc += 40 
         
         if d_spo2 < -1.5: risc += 40 
@@ -116,9 +154,6 @@ if not df.empty:
             timp_sec = 0
 
         context = "✅ Stabil"
-        
-        # NOU: Fuziunea Senzorilor (Sensor Fusion) îmbunătățită
-        # Dacă pulsul e uriaș, dar oxigenul e la limită (>=94) și tensiunea e bună (>=100), e doar efort, NU șoc!
         if p_act > 120 and s_act >= 94 and t_act >= 100:
             context = "🏃 Efort Tactic"
             risc = max(0, risc - 20)
@@ -128,11 +163,14 @@ if not df.empty:
         return {
             'id': pid, 'puls': p_act, 'spo2': s_act, 'tensiune': t_act, 'respiratie': r_act,
             'delta_puls': d_puls, 'delta_spo2': d_spo2, 'risc': risc, 'timp_sec': timp_sec,
-            'context': context, 'timp_exact': rand['Timp_Exact']
+            'context': context, 'timp_exact': rand['Timp_Exact'], 'is_kia': False
         }
 
     # Asistentul Digital TCCC (Ghidaj de Prim Ajutor)
     def genereaza_protocol_tccc(soldat):
+        if soldat.get('is_kia', False):
+            return "💀 **DECES CONSTATAT (T4 - NEGRU).**\n\n* Fără semne vitale.\n* Se suspendă protocolul de resuscitare conform regulilor de triaj tactic MASCAL.\n* Protejați corpul și echipamentul (Echipa Mortuary Affairs)."
+
         if soldat['risc'] < 40:
             return "✅ **Nicio acțiune medicală necesară.** Soldat combatant."
         
@@ -163,19 +201,32 @@ if not df.empty:
         stari_sortate = sorted(toti_evaluati, key=lambda x: (-x['risc'], x['spo2']))
         
         top_5 = stari_sortate[:5]
-        cel_mai_critic = top_5[0]
+        
+        # Logica de direcționare MEDEVAC care exclude pacienții KIA
+        vii = [s for s in stari_sortate if not s.get('is_kia', False)]
+        numar_kia = len([s for s in stari_sortate if s.get('is_kia', False)])
+        mesaj_kia = f" | {numar_kia} Decese înregistrate (KIA)" if numar_kia > 0 else ""
 
-        if cel_mai_critic['risc'] >= 80:
-            st.error(f"🚨 **ALERTĂ MASCAL:** MEDEVAC alocat automat Țintei Principale (Soldat {cel_mai_critic['id']}).")
-        elif cel_mai_critic['risc'] >= 40:
-            st.warning("⚠️ Batalionul raportează răniți. Triaj T2 în desfășurare.")
+        if vii:
+            cel_mai_critic_viu = vii[0]
+            if cel_mai_critic_viu['risc'] >= 80:
+                st.error(f"🚨 **ALERTĂ MASCAL:** MEDEVAC alocat automat Soldatului Salvabil ({cel_mai_critic_viu['id']}).{mesaj_kia}")
+            elif cel_mai_critic_viu['risc'] >= 40:
+                st.warning(f"⚠️ Batalionul raportează răniți. Triaj T2 în desfășurare.{mesaj_kia}")
+            else:
+                if numar_kia > 0:
+                    st.warning(f"⚠️ Batalion operațional. Pierderi: {numar_kia} KIA.")
+                else:
+                    st.success("✅ Tot batalionul este operațional.")
         else:
-            st.success("✅ Tot batalionul este operațional.")
+            st.error("⬛ BATALION COMPROMIS. FĂRĂ SUPRAVIEȚUITORI DETECTAȚI.")
 
         st.markdown("---")
         
         def deseneaza_card(soldat, dimensiune_titlu="h3"):
-            if soldat['risc'] < 40:
+            if soldat.get('is_kia', False):
+                culoare_bg = "#000000"; stadiu = "T4 (NEGRU - KIA)"; edge_ai = "⬛ SENZORI OFFLINE (DEVEDAT)"
+            elif soldat['risc'] < 40:
                 culoare_bg = "#1e3d23"; stadiu = "T3 (VERDE)"; edge_ai = "🤫 LINIȘTE RADIO"
             elif soldat['risc'] < 80:
                 culoare_bg = "#8a631c"; stadiu = "T2 (GALBEN)"; edge_ai = "📡 ALERTĂ PRE-CRASH"
@@ -197,7 +248,7 @@ if not df.empty:
                 st.session_state.soldat_selectat = soldat['id']
                 st.rerun()
 
-        st.markdown("### 🥇 ȚINTĂ PRIORITARĂ (Cel mai grav rănit)")
+        st.markdown("### 🥇 ȚINTĂ PRIORITARĂ (Cel mai grav caz)")
         deseneaza_card(top_5[0], dimensiune_titlu="h2")
         
         st.markdown("### ⚠️ Restul topului (Următorii 4)")
@@ -206,8 +257,9 @@ if not df.empty:
         coloane_top4 = [c1, c2, c3, c4]
         
         for idx in range(1, 5):
-            with coloane_top4[idx-1]:
-                deseneaza_card(top_5[idx])
+            if idx < len(top_5):
+                with coloane_top4[idx-1]:
+                    deseneaza_card(top_5[idx])
 
     # ==========================================
     # ECRAN 2: VEDEREA DETALIATĂ (ZOOM DIRECT PE GRAFIC)
@@ -222,27 +274,42 @@ if not df.empty:
         st.markdown(f"**⏱️ Secunda: {timp_curent} | ORA: {soldat['timp_exact']}**")
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Puls (BPM)", f"{soldat['puls']:.0f}", f"{soldat['delta_puls']:.1f}", delta_color="inverse")
-        c2.metric("SpO2 (%)", f"{soldat['spo2']:.0f}", f"{soldat['delta_spo2']:.1f}")
+        c1.metric("Puls (BPM)", f"{soldat['puls']:.0f}", f"{soldat['delta_puls']:.1f}" if not soldat.get('is_kia') else "0.0", delta_color="inverse")
+        c2.metric("SpO2 (%)", f"{soldat['spo2']:.0f}", f"{soldat['delta_spo2']:.1f}" if not soldat.get('is_kia') else "0.0")
         c3.metric("Tensiune (mmHg)", f"{soldat['tensiune']:.0f}" if pd.notna(soldat['tensiune']) else "N/A")
         c4.metric("Respirație", f"{soldat['respiratie']:.0f}" if pd.notna(soldat['respiratie']) else "N/A")
 
         st.markdown("### 📊 Monitorizare Multi-Senzor")
-        date_istoric = date_toti[pid].iloc[:timp_curent+1]
+        date_istoric = date_toti[pid].iloc[:timp_curent+1].copy()
         
+        # --- PRELUCRARE GRAFIC PENTRU ERORI VS KIA ---
+        # 1. Identificăm momentele în care e KIA (>= 3 senzori arată 0 sau lipsesc)
+        zero_mask = (date_istoric[['Puls', 'SpO2', 'Tensiune', 'Respiratie']] == 0) | date_istoric[['Puls', 'SpO2', 'Tensiune', 'Respiratie']].isna()
+        kia_mask = zero_mask.sum(axis=1) >= 3
+        
+        # 2. Înlocuim temporar toți de 0 cu lipsă, ca să aplicăm istoricul (Forward Fill)
+        for col in ['Puls', 'SpO2', 'Tensiune', 'Respiratie']:
+            date_istoric[col] = date_istoric[col].replace(0, pd.NA)
+        date_istoric[['Puls', 'SpO2', 'Tensiune', 'Respiratie']] = date_istoric[['Puls', 'SpO2', 'Tensiune', 'Respiratie']].ffill()
+        
+        # 3. Cei care erau oficial KIA, primesc valoarea 0 ca să se vadă "Flatline" (linie dreaptă) pe ecran
+        date_istoric.loc[kia_mask, ['Puls', 'SpO2', 'Tensiune', 'Respiratie']] = 0
+
         grafic_df = pd.DataFrame({
-            'SpO2 (%)': date_istoric['SpO2'].ffill().fillna(98),
-            'Puls (BPM)': date_istoric['Puls'].ffill().fillna(80),
-            'Tensiune (mmHg)': date_istoric['Tensiune'].ffill().fillna(120),
-            'Respirație (RPM)': date_istoric['Respiratie'].ffill().fillna(16)
+            'SpO2 (%)': date_istoric['SpO2'].fillna(98),
+            'Puls (BPM)': date_istoric['Puls'].fillna(80),
+            'Tensiune (mmHg)': date_istoric['Tensiune'].fillna(120),
+            'Respirație (RPM)': date_istoric['Respiratie'].fillna(16)
         })
         st.line_chart(grafic_df, height=450)
 
-        # --- NOU: ASISTENTUL TACTIC DE PRIM AJUTOR ---
         protocol_activ = genereaza_protocol_tccc(soldat)
         
         st.markdown("---")
-        if soldat['risc'] >= 40:
+        if soldat.get('is_kia', False):
+            st.error("### ⬛ PROTOCOL ACȚIUNE IMEDIATĂ (TCCC)")
+            st.markdown(f"<div style='font-size: 18px; padding: 10px; background-color: #000000; border-radius: 5px; color: white;'>{protocol_activ}</div>", unsafe_allow_html=True)
+        elif soldat['risc'] >= 40:
             st.error("### ⚠️ PROTOCOL ACȚIUNE IMEDIATĂ (TCCC)")
             st.markdown(f"<div style='font-size: 18px; padding: 10px; background-color: #521818; border-radius: 5px; color: white;'>{protocol_activ}</div>", unsafe_allow_html=True)
         else:
@@ -254,19 +321,26 @@ if not df.empty:
         
         with c_pred:
             st.subheader("🔮 AI Predictiv P.A.C.E.")
-            risc = soldat['risc']
-            timp_text = "Stabil" if soldat['timp_sec'] == 9999 else ("IMINENT (0 min)" if soldat['timp_sec'] == 0 else f"{soldat['timp_sec']//60} min {soldat['timp_sec']%60} sec")
-
-            if risc < 40:
-                st.success(f"Probabilitate Colaps: {risc}%"); st.progress(risc / 100); st.info(f"Timp până la șoc: {timp_text}")
-            elif risc < 80:
-                st.warning(f"Probabilitate Colaps: {risc}%"); st.progress(risc / 100); st.warning(f"Timp până la șoc: {timp_text}")
+            if soldat.get('is_kia', False):
+                st.error("Probabilitate Colaps: 100% (DECES)")
+                st.progress(1.0)
+                st.error("Timp până la șoc: N/A")
             else:
-                st.error(f"Probabilitate Colaps: {risc}%"); st.progress(risc / 100); st.error(f"Timp până la șoc: {timp_text}")
+                risc = soldat['risc']
+                timp_text = "Stabil" if soldat['timp_sec'] == 9999 else ("IMINENT (0 min)" if soldat['timp_sec'] == 0 else f"{soldat['timp_sec']//60} min {soldat['timp_sec']%60} sec")
+
+                if risc < 40:
+                    st.success(f"Probabilitate Colaps: {risc}%"); st.progress(risc / 100); st.info(f"Timp până la șoc: {timp_text}")
+                elif risc < 80:
+                    st.warning(f"Probabilitate Colaps: {risc}%"); st.progress(risc / 100); st.warning(f"Timp până la șoc: {timp_text}")
+                else:
+                    st.error(f"Probabilitate Colaps: {risc}%"); st.progress(risc / 100); st.error(f"Timp până la șoc: {timp_text}")
         
         with c_med:
             st.subheader("🚁 Auto-Dispatch MEDEVAC")
-            if risc >= 80:
+            if soldat.get('is_kia', False):
+                st.error("⬛ ALERTĂ T4 (NEGRU)!\n* Extracție medicală MEDEVAC anulată.\n* Echipa de recuperare (Mortuary Affairs) a fost notificată.")
+            elif soldat['risc'] >= 80:
                 st.error("🚨 ALERTĂ T1 DECLANȘATĂ!\n* Semnal SOS prioritar trimis.\n* Dronă activată.\n* ETA: 3 min.")
             else:
                 st.success("✅ MEDEVAC în Stand-by.")
