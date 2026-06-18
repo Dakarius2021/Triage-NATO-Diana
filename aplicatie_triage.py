@@ -80,7 +80,7 @@ if not df.empty:
         ---
         **🧠 Inovații (Deep Tech):**
         * **Edge AI:** Păstrează „Liniștea Radio” când pacientul este stabil.
-        * **Sensor Fusion:** Diferențiază efortul fizic de o rană reală.
+        * **Sensor Fusion:** Diferențiază efortul fizic de o rană reală (corelând Puls, SpO2 și Tensiune).
         * **Protocol TCCC:** Asistență automată de prim ajutor pentru camarazi.
         """)
 
@@ -102,6 +102,10 @@ if not df.empty:
         if s_act < 95: risc += 20
         if s_act < 90: risc += 40
         if p_act > 110 or p_act < 50: risc += 20
+        
+        # NOU: Scăderea Tensiunii adaugă risc masiv direct în algoritmul de bază
+        if t_act < 90: risc += 40 
+        
         if d_spo2 < -1.5: risc += 40 
         risc = min(100, max(0, risc))
 
@@ -112,10 +116,13 @@ if not df.empty:
             timp_sec = 0
 
         context = "✅ Stabil"
-        if p_act > 120 and s_act >= 95:
+        
+        # NOU: Fuziunea Senzorilor (Sensor Fusion) îmbunătățită
+        # Dacă pulsul e uriaș, dar oxigenul e la limită (>=94) și tensiunea e bună (>=100), e doar efort, NU șoc!
+        if p_act > 120 and s_act >= 94 and t_act >= 100:
             context = "🏃 Efort Tactic"
             risc = max(0, risc - 20)
-        elif p_act > 120 and s_act < 92:
+        elif p_act > 120 and (s_act < 92 or t_act < 90):
             context = "💥 Traumă/Hemoragie"
 
         return {
