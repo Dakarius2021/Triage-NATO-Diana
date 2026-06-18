@@ -44,16 +44,31 @@ if not df.empty:
         st.session_state.simulare_activa = False
         st.rerun()
 
+    # --- NOU: Meniu de Selectare Manuală a Oricărui Soldat ---
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔎 Căutare Manuală")
+    # Găsim indexul soldatului selectat curent (dacă există) pentru a-l seta ca default în listă
+    index_default = 0
+    if st.session_state.soldat_selectat in lista_completa:
+        index_default = lista_completa.index(st.session_state.soldat_selectat)
+        
+    soldat_manual = st.sidebar.selectbox("Caută ID Soldat:", lista_completa, index=index_default)
+    
+    if st.sidebar.button("Vezi Dosar Selectat"):
+        st.session_state.mod_vizualizare = 'detaliu'
+        st.session_state.soldat_selectat = soldat_manual
+        st.rerun()
+
+    # Buton de întoarcere rapidă
     if st.session_state.mod_vizualizare == 'detaliu':
         st.sidebar.markdown("---")
-        if st.sidebar.button("🔙 ÎNAPOI LA SCANER", type="secondary"):
+        if st.sidebar.button("🔙 ÎNAPOI LA RADAR", type="secondary"):
             st.session_state.mod_vizualizare = 'pluton'
             st.rerun()
 
     st.sidebar.markdown("---")
-    st.sidebar.info("📡 **Radar Tactic:** Sistemul scanează 100 de soldați simultan și îi afișează doar pe cei mai critici 5.")
+    st.sidebar.info("📡 **Radar Tactic:** Sistemul scanează 100 de soldați simultan.")
 
-    # --- NOU: LEGENDA TACTICĂ ---
     with st.sidebar.expander("📖 LEGENDĂ & GLOSAR TACTIC", expanded=False):
         st.markdown("""
         **🟩 T3 (VERDE) - Operațional**
@@ -137,7 +152,6 @@ if not df.empty:
 
         st.markdown("---")
         
-        # Funcție pentru carduri, ACUM INCLUSIV cu textul EDGE AI cerut!
         def deseneaza_card(soldat, dimensiune_titlu="h3"):
             if soldat['risc'] < 40:
                 culoare_bg = "#1e3d23"; stadiu = "T3 (VERDE)"; edge_ai = "🤫 LINIȘTE RADIO (Edge AI)"
@@ -174,7 +188,7 @@ if not df.empty:
                 deseneaza_card(top_5[idx])
 
     # ==========================================
-    # ECRAN 2: VEDEREA DETALIATĂ (ZOOM)
+    # ECRAN 2: VEDEREA DETALIATĂ (ZOOM DIRECT PE GRAFIC)
     # ==========================================
     elif st.session_state.mod_vizualizare == 'detaliu':
         pid = st.session_state.soldat_selectat
@@ -182,26 +196,37 @@ if not df.empty:
         
         status_misiune = "<span style='color:red;'>🔴 LIVE REC</span>" if st.session_state.simulare_activa else "<span style='color:gray;'>⏸ PAUZĂ</span>"
         
-        st.markdown(f"<h1>🔍 Dosar Tactic: Soldatul {pid} {status_misiune}</h1>", unsafe_allow_html=True)
-        st.markdown(f"**⏱️ Secunda Misiunii: {timp_curent} (Ritm: 1 rând/secundă) | ORA: {soldat['timp_exact']}**")
+        # Titlul este simplificat pentru a duce ochiul direct jos
+        st.markdown(f"<h2>🔍 Dosar Tactic: {pid} | {status_misiune}</h2>", unsafe_allow_html=True)
+        st.markdown(f"**⏱️ Secunda: {timp_curent} | ORA: {soldat['timp_exact']}**")
 
-        col_stanga, col_dreapta = st.columns([2, 1])
+        # Metricele numerice rapide
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Puls (BPM)", f"{soldat['puls']:.0f}", f"{soldat['delta_puls']:.1f}", delta_color="inverse")
+        c2.metric("SpO2 (%)", f"{soldat['spo2']:.0f}", f"{soldat['delta_spo2']:.1f}")
+        c3.metric("Tensiune (mmHg)", f"{soldat['tensiune']:.0f}" if pd.notna(soldat['tensiune']) else "N/A")
+        c4.metric("Respirație", f"{soldat['respiratie']:.0f}" if pd.notna(soldat['respiratie']) else "N/A")
 
-        with col_stanga:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Puls", f"{soldat['puls']:.0f}", f"{soldat['delta_puls']:.1f}", delta_color="inverse")
-            c2.metric("SpO2 (%)", f"{soldat['spo2']:.0f}", f"{soldat['delta_spo2']:.1f}")
-            c3.metric("Tensiune", f"{soldat['tensiune']:.0f}" if pd.notna(soldat['tensiune']) else "N/A")
-            c4.metric("Respirație", f"{soldat['respiratie']:.0f}" if pd.notna(soldat['respiratie']) else "N/A")
+        # --- NOU: GRAFICUL COMPLET CU TOATE CELE 4 VARIABILE ---
+        # Folosim lățimea completă a ecranului (fără coloană laterală) pentru a face graficul imens
+        st.markdown("### 📊 Monitorizare Multi-Senzor")
+        date_istoric = date_toti[pid].iloc[:timp_curent+1]
+        
+        # Extragem și curățăm toate cele 4 linii pentru grafic
+        grafic_df = pd.DataFrame({
+            'SpO2 (%)': date_istoric['SpO2'].ffill().fillna(98),
+            'Puls (BPM)': date_istoric['Puls'].ffill().fillna(80),
+            'Tensiune (mmHg)': date_istoric['Tensiune'].ffill().fillna(120),
+            'Respirație (RPM)': date_istoric['Respiratie'].ffill().fillna(16)
+        })
+        # Desenăm graficul mare
+        st.line_chart(grafic_df, height=450)
 
-            date_istoric = date_toti[pid].iloc[:timp_curent+1]
-            grafic_df = pd.DataFrame({
-                'SpO2 (%)': date_istoric['SpO2'].ffill().fillna(98),
-                'Puls (BPM)': date_istoric['Puls'].ffill().fillna(80)
-            })
-            st.line_chart(grafic_df, height=350)
-
-        with col_dreapta:
+        # Modulul de predicție mutat imediat dedesubt (pentru a nu "strânge" graficul pe laterale)
+        st.markdown("---")
+        c_pred, c_med = st.columns(2)
+        
+        with c_pred:
             st.subheader("🔮 AI Predictiv P.A.C.E.")
             risc = soldat['risc']
             timp_text = "Stabil" if soldat['timp_sec'] == 9999 else ("IMINENT (0 min)" if soldat['timp_sec'] == 0 else f"{soldat['timp_sec']//60} min {soldat['timp_sec']%60} sec")
@@ -212,8 +237,8 @@ if not df.empty:
                 st.warning(f"Probabilitate Colaps: {risc}%"); st.progress(risc / 100); st.warning(f"Timp până la șoc: {timp_text}")
             else:
                 st.error(f"Probabilitate Colaps: {risc}%"); st.progress(risc / 100); st.error(f"Timp până la șoc: {timp_text}")
-            
-            st.markdown("---")
+        
+        with c_med:
             st.subheader("🚁 Auto-Dispatch MEDEVAC")
             if risc >= 80:
                 st.error("🚨 ALERTĂ T1 DECLANȘATĂ!\n* Semnal SOS prioritar trimis.\n* Dronă activată.")
@@ -224,7 +249,7 @@ if not df.empty:
     # MOTORUL TIMPULUI CONTINUU
     # ==========================================
     if st.session_state.simulare_activa and timp_curent < durata_minima - 1:
-        time.sleep(1.0) # Viteză constantă: 1 secundă pe tick
+        time.sleep(1.0) 
         st.session_state.timp_curent += 1 
         st.rerun() 
     elif st.session_state.simulare_activa and timp_curent >= durata_minima - 1:
